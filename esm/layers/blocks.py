@@ -3,7 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from esm.layers.attention import FlashMultiHeadAttention, MultiHeadAttention
-from esm.layers.geom_attention import GeometricReasoningOriginalImpl
+from esm.layers.x_attention import x_FlashMultiHeadAttention, x_MultiHeadAttention
+#from esm.layers.geom_attention import GeometricReasoningOriginalImpl
 from esm.utils.structure.affine3d import Affine3D
 
 
@@ -35,6 +36,37 @@ def swiglu_ln_ffn(d_model: int, expansion_ratio: float, bias: bool):
         ),
         SwiGLU(),
         nn.Linear(swiglu_correction_fn(expansion_ratio, d_model), d_model, bias=bias),
+    )
+
+
+def x_swiglu_ln_ffn(d_model: int, expansion_ratio: float, bias: bool):
+    # https://github.com/meta-pytorch/torchtune/blob/main/recipes/configs/qwen3/0.6B_lora_single_device.yaml
+    # lora_attn_modules: ['q_proj', 'v_proj', 'output_proj']
+    # apply_lora_to_mlp: True
+    # lora_rank: 32  # higher increases accuracy and memory
+    # lora_alpha: 64  # usually alpha=2*rank
+    # lora_dropout: 0.0
+    from esm.layers.lora import LoRALinear
+    lora_rank = 32
+    lora_alpha = 64
+    lora_dropout = 0.0
+    return nn.Sequential(
+        nn.LayerNorm(d_model),
+        LoRALinear(
+            d_model,
+            swiglu_correction_fn(expansion_ratio, d_model) * 2,
+            rank=lora_rank,
+            alpha=lora_alpha,
+            dropout=lora_dropout,
+            use_bias=bias,
+        ),
+        SwiGLU(),
+        LoRALinear(swiglu_correction_fn(expansion_ratio, d_model),
+                   d_model,
+                   rank=lora_rank,
+                   alpha=lora_alpha,
+                   dropout=lora_dropout,
+                   use_bias=bias),
     )
 
 
@@ -87,16 +119,25 @@ class UnifiedTransformerBlock(nn.Module):
     ):
         super().__init__()
         self.use_plain_attn = use_plain_attn
+        assert self.use_plain_attn
+        assert use_flash_attn
         if self.use_plain_attn:
             if use_flash_attn:
-                self.attn = FlashMultiHeadAttention(
+                # debug
+                #print("use_flash_attn: {}".format(use_flash_attn))
+                self.attn = x_FlashMultiHeadAttention(
+                #self.attn = FlashMultiHeadAttention(
                     d_model, n_heads, bias, qk_layernorm=qk_layernorm
                 )
             else:
-                self.attn = MultiHeadAttention(
+                # debug
+                #print("use_flash_attn: {}".format(use_flash_attn))
+                self.attn = x_MultiHeadAttention(
+                #self.attn = MultiHeadAttention(
                     d_model, n_heads, bias, qk_layernorm=qk_layernorm
                 )
         self.use_geom_attn = use_geom_attn
+        assert not self.use_geom_attn
         if self.use_geom_attn:
             if v_heads is None:
                 raise ValueError("v_heads must be specified when use_geom_attn is True")
@@ -107,7 +148,8 @@ class UnifiedTransformerBlock(nn.Module):
                 mask_and_zero_frameless=mask_and_zero_frameless,
             )
         if ffn_type == "swiglu":
-            self.ffn = swiglu_ln_ffn(d_model, expansion_ratio, bias)
+            #self.ffn = swiglu_ln_ffn(d_model, expansion_ratio, bias)
+            self.ffn = x_swiglu_ln_ffn(d_model, expansion_ratio, bias)
         elif ffn_type == "gelu":
             self.ffn = gelu_ln_ffn(d_model, expansion_ratio, bias)
         else:

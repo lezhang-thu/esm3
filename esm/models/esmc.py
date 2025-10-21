@@ -177,6 +177,9 @@ class ESMC(nn.Module, ESMCInferenceClient):
         sequence_tokens = None
 
         if input.sequence is not None:
+            t = self._tokenize(input.sequence)
+            print(t)
+            exit(0)
             sequence_tokens = self._tokenize([input.sequence])[0]
         return ESMProteinTensor(sequence=sequence_tokens).to(
             next(self.parameters()).device

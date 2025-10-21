@@ -4,7 +4,8 @@ import torch
 import torch.nn as nn
 
 from esm.models.esm3 import ESM3
-from esm.models.esmc import ESMC
+#from esm.models.esmc import ESMC
+from esm.models.x_esmc import ESMC
 from esm.models.function_decoder import FunctionTokenDecoder
 from esm.models.vqvae import StructureTokenDecoder, StructureTokenEncoder
 from esm.tokenization import get_esm3_model_tokenizers, get_esmc_model_tokenizers
@@ -87,7 +88,13 @@ def ESMC_600M_202412(device: torch.device | str = "cpu", use_flash_attn: bool = 
         data_root("esmc-600") / "data/weights/esmc_600m_2024_12_v0.pth",
         map_location=device,
     )
-    model.load_state_dict(state_dict)
+    base_missing, base_unexpected = model.load_state_dict(state_dict, strict=False)
+    # print('base_missing: {}'.format(base_missing))
+    # print('base_unexpected: {}'.format(base_unexpected))
+    assert all('lora' in x for x in base_missing if ("mu" not in x and "logsigma" not in x))
+    assert len(base_unexpected) == 0
+    t = [_ for _ in base_missing if "mu" in _ or "logsigma" in _]
+    print('besides lora:\n{}'.format(t))
 
     return model
 
