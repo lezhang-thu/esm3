@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from esm.layers.rotary import RotaryEmbedding, TritonRotaryEmbedding
+from esm.layers.lora import LoRALinear
 
 try:
     from flash_attn import flash_attn_varlen_qkvpacked_func  # type: ignore
@@ -135,7 +136,14 @@ class x_MultiHeadAttention(nn.Module):
         self.layernorm_qkv = nn.Sequential(
             nn.LayerNorm(d_model),
             LoRALinearQKV(d_model, d_model * 3, bias=bias))
-        self.out_proj = nn.Linear(d_model, d_model, bias=bias)
+        self.out_proj = LoRALinear(
+            d_model,
+            d_model,
+            rank=32,          # same rank used for Q/V in LoRALinearQKV
+            alpha=64,         # typically alpha = 2 * rank
+            dropout=0.0,
+            use_bias=bias,
+        )
 
         if qk_layernorm:
             self.q_ln = nn.LayerNorm(d_model, bias=bias)
