@@ -14,7 +14,7 @@ BATCH_SIZE = 2
 VAL_BATCH = 4
 NUM_EPOCHS = 100
 #EVAL_ITER = 4096
-EVAL_ITER = 256
+EVAL_ITER = 1024
 GRAD_ACC = 16
 
 #EPS = 1e-12
@@ -88,6 +88,7 @@ class CensoredGaussianNLL(nn.Module):
 
         # debug
         exact_nll = .5 * (values - mu)**2
+        assert torch.all(exact_mask[:, :1])
         nll = exact_nll * exact_mask.float()
         #nll += -left_log_prob * less_mask.float()
         #nll += -right_log_prob * greater_mask.float()
@@ -181,7 +182,8 @@ def main(client, train_loader, val_loader):
             (loss / GRAD_ACC).backward()
             if (idx + 1) % 128 == 0:
                 print('idx: {}'.format(idx))
-                print('values[:, :1]:\n{}'.format(values.detach().cpu()[:, :1]))
+                print('values[:, :1]:\n{}'.format(
+                    values.detach().cpu()[:, :1]))
                 print('mu[:, :1]:\n{}'.format(mu.detach().cpu()[:, :1]))
                 #print('mu:\n{}'.format(mu.detach().cpu()))
             if (idx + 1) % GRAD_ACC == 0:
@@ -199,12 +201,11 @@ if __name__ == '__main__':
     import pandas as pd
     prefix = "/home/ubuntu/lezhang.thu/biology-research/hiv-1/hiv-data/antibody-antigen-seq"
     #df = pd.read_csv(os.path.join(prefix, "filtered-assay.csv"))
-    df = pd.read_csv(os.path.join(prefix, "filtered-assay-float.csv"))
+    df = pd.read_csv(os.path.join(prefix, "filtered-assay-numeric.csv"))
     from sklearn.model_selection import train_test_split
 
-    # Suppose your DataFrame is called df
     #train_df, val_df = train_test_split(df, test_size=0.02, random_state=42)
-    train_df, val_df = train_test_split(df, test_size=0.01, random_state=42)
+    train_df, val_df = train_test_split(df, test_size=0.02, random_state=42)
     train_loader = torch.utils.data.DataLoader(
         SequenceDataset(train_df),
         batch_size=BATCH_SIZE,

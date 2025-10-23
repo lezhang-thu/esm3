@@ -33,9 +33,10 @@ class SequenceDataset(Dataset):
         subs = [x.strip() for x in antibody.split("+")]
         random.shuffle(subs)
         subs = [self.antibody_lookup[_] for _ in subs]
+        assert len(subs) == 1
         seq = "||".join(subs)
 
-        seq = "|||".join([seq, self.virus_lookup[virus]])
+        seq = "".join([self.virus_lookup[virus].ljust(1152, '-'), seq])
         return seq, (IC50, IC80, ID50)
 
 
