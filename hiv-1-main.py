@@ -155,6 +155,11 @@ def main(client, train_loader, val_loader):
         weight_decay=0.01,
     )
     criterion = CensoredGaussianNLL()
+
+    best_nll = float("inf")  # track best validation performance
+    save_dir = "./checkpoints"
+    os.makedirs(save_dir, exist_ok=True)
+
     for epoch in range(NUM_EPOCHS):
         client.train()
         for idx, (seq, label) in enumerate(train_loader):
@@ -194,6 +199,17 @@ def main(client, train_loader, val_loader):
             if (idx + 1) % EVAL_ITER == 0:
                 test_nll = evaluate(client, val_loader, criterion)
                 print(f"Epoch {epoch}, iter {idx}: Test NLL = {test_nll:.4f}")
+                # ✅ Save if improved
+                if test_nll < best_nll:
+                    best_nll = test_nll
+                    ckpt_path = os.path.join(save_dir, "best-hiv-1.pt")
+                    torch.save({
+                        "lora_params": {n: p.cpu() for n, p in client.named_parameters() if 'lora' in n},
+                        "mu": client.mu.state_dict(),
+                        "logsigma": client.logsigma.state_dict(),
+                    }, ckpt_path)
+                    print(f"✅ Saved improved model to {ckpt_path}")
+
                 client.train()
     test_nll = evaluate(client, val_loader, criterion)
     print(f"FINAL Test NLL = {test_nll:.4f}")
