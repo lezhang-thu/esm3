@@ -60,9 +60,14 @@ class ESMC(nn.Module, ESMCInferenceClient):
         self.sequence_head = RegressionHead(d_model, 64)
         self.tokenizer = tokenizer
 
-        self.mu = nn.Sequential(nn.LayerNorm(d_model, bias=False),
-                                nn.Linear(d_model, 3))
-        self.logsigma = nn.Linear(d_model, 3)
+        self.mu = nn.Sequential(
+            nn.LayerNorm(d_model, bias=False),
+            nn.Linear(d_model, 3),
+        )
+        self.logsigma = nn.Sequential(
+            nn.LayerNorm(d_model, bias=False),
+            nn.Linear(d_model, 3),
+        )
 
     @classmethod
     def from_pretrained(cls,

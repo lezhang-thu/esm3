@@ -11,17 +11,17 @@ class SequenceDataset(Dataset):
     def __init__(self, df):
         import os
         self.data = df
-        prefix = "/home/ubuntu/lezhang.thu/biology-research/hiv-1/hiv-data/antibody-antigen-seq"
+        prefix = "./hiv-data/antibody-antigen-seq"
 
         t = pd.read_csv(os.path.join(prefix, "antibody-seq.csv"))
         self.antibody_lookup = {
-            row['antibody-id']: row['heavy-seq'] + '|' + row['light-seq']
+            row['antibody-id']: row['heavy-seq'].ljust(512, '-') + '|' + row['light-seq'].ljust(256, '-')
             for _, row in t.iterrows()
         }
 
         t = pd.read_csv(os.path.join(prefix, "virus-seq.csv"))
         self.virus_lookup = {
-            row['virus-id']: row['seq']
+            row['virus-id']: row['seq'].ljust(1152, '-')
             for _, row in t.iterrows()
         }
 
@@ -36,7 +36,8 @@ class SequenceDataset(Dataset):
         assert len(subs) == 1
         seq = "||".join(subs)
 
-        seq = "".join([self.virus_lookup[virus].ljust(1152, '-'), seq])
+        # first virus, then antibody. as antibodies can be multiple
+        seq = "|||".join([self.virus_lookup[virus], seq])
         return seq, (IC50, IC80, ID50)
 
 
@@ -83,7 +84,7 @@ def collate_fn(batch):
                 float_val = float(numeric_str)
                 values[i, j] = float_val
                 less_mask[i, j] = True
-    if True: 
+    if True:
         mask = values > 0
         values[mask] = np.log10(values[mask])
     return sequences, (values, exact_mask, greater_mask, less_mask)

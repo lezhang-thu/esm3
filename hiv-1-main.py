@@ -56,7 +56,8 @@ class CensoredGaussianNLL(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.standard_normal = torch.distributions.Normal(0, 1)
+        #self.standard_normal = torch.distributions.Normal(0, 1)
+        self.t = 0.5 * torch.log(torch.tensor(2 * torch.pi, device='cuda'))
 
     def forward(
         self,
@@ -74,11 +75,10 @@ class CensoredGaussianNLL(nn.Module):
         sigma = 1.0
         z = (values - mu) / sigma
         #z = torch.clamp(z, min=-10, max=10)
-        z = torch.clamp(z, min=-8, max=8)  # Φ(±8) ≈ 6e-16
+        #z = torch.clamp(z, min=-8, max=8)  # Φ(±8) ≈ 6e-16
 
         # Exact: -0.5*log(2π) - log(σ) - 0.5*z²
-        exact_nll = 0.5 * z**2 + logsigma + 0.5 * torch.log(
-            torch.tensor(2 * 3.14159265359))
+        exact_nll = 0.5 * z**2 + logsigma + self.t
 
         # Left-censored: log Φ(z)
         left_log_prob = torch.special.log_ndtr(z)
@@ -87,12 +87,12 @@ class CensoredGaussianNLL(nn.Module):
         right_log_prob = torch.special.log_ndtr(-z)
 
         # debug
-        exact_nll = .5 * (values - mu)**2
-        assert torch.all(exact_mask[:, :1])
+        #exact_nll = .5 * (values - mu)**2
+        #assert torch.all(exact_mask[:, :1])
         nll = exact_nll * exact_mask.float()
-        #nll += -left_log_prob * less_mask.float()
-        #nll += -right_log_prob * greater_mask.float()
-        nll = nll[:, :1]
+        nll = nll - left_log_prob * less_mask.float()
+        nll = nll - right_log_prob * greater_mask.float()
+        #nll = nll[:, :1]
 
         return nll.mean()
 
@@ -182,9 +182,11 @@ def main(client, train_loader, val_loader):
             (loss / GRAD_ACC).backward()
             if (idx + 1) % 128 == 0:
                 print('idx: {}'.format(idx))
-                print('values[:, :1]:\n{}'.format(
-                    values.detach().cpu()[:, :1]))
-                print('mu[:, :1]:\n{}'.format(mu.detach().cpu()[:, :1]))
+                print('values:\n{}'.format(values.detach().cpu()))
+                print('mu:\n{}'.format(mu.detach().cpu()))
+                #print('values[:, :1]:\n{}'.format(
+                #    values.detach().cpu()[:, :1]))
+                #print('mu[:, :1]:\n{}'.format(mu.detach().cpu()[:, :1]))
                 #print('mu:\n{}'.format(mu.detach().cpu()))
             if (idx + 1) % GRAD_ACC == 0:
                 optimizer.step()
@@ -199,9 +201,9 @@ def main(client, train_loader, val_loader):
 
 if __name__ == '__main__':
     import pandas as pd
-    prefix = "/home/ubuntu/lezhang.thu/biology-research/hiv-1/hiv-data/antibody-antigen-seq"
+    prefix = "./hiv-data/antibody-antigen-seq"
     #df = pd.read_csv(os.path.join(prefix, "filtered-assay.csv"))
-    df = pd.read_csv(os.path.join(prefix, "filtered-assay-numeric.csv"))
+    df = pd.read_csv(os.path.join(prefix, "single-assay.csv"))
     from sklearn.model_selection import train_test_split
 
     #train_df, val_df = train_test_split(df, test_size=0.02, random_state=42)
