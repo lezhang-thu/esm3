@@ -62,12 +62,12 @@ class ESMC(nn.Module, ESMCInferenceClient):
 
         self.mu = nn.Sequential(
             nn.LayerNorm(d_model, bias=False),
-            nn.Linear(d_model, 3),
+            nn.Linear(d_model, 2),
         )
-        self.logsigma = nn.Sequential(
-            nn.LayerNorm(d_model, bias=False),
-            nn.Linear(d_model, 3),
-        )
+        #self.logsigma = nn.Sequential(
+        #    nn.LayerNorm(d_model, bias=False),
+        #    nn.Linear(d_model, 2),
+        #)
 
     @classmethod
     def from_pretrained(cls,
@@ -153,4 +153,5 @@ class ESMC(nn.Module, ESMCInferenceClient):
         hiddens = self.forward(sequence_tokens=seq.sequence)
         # [n_layers, B, L, D]
         cls_vec = hiddens[-1, :, 0, :]
-        return self.mu(cls_vec), self.logsigma(cls_vec)
+        #return self.mu(cls_vec), self.logsigma(cls_vec)
+        return self.mu(cls_vec), None

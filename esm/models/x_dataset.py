@@ -29,7 +29,7 @@ class SequenceDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        antibody, virus, IC50, IC80, ID50 = self.data.iloc[idx]
+        antibody, virus, IC50, IC80 = self.data.iloc[idx]
         subs = [x.strip() for x in antibody.split("+")]
         random.shuffle(subs)
         subs = [self.antibody_lookup[_] for _ in subs]
@@ -38,7 +38,7 @@ class SequenceDataset(Dataset):
 
         # first virus, then antibody. as antibodies can be multiple
         seq = "|||".join([self.virus_lookup[virus], seq])
-        return seq, (IC50, IC80, ID50)
+        return seq, (IC50, IC80)
 
 
 def collate_fn(batch):
@@ -46,10 +46,10 @@ def collate_fn(batch):
     sequences, labels = zip(*batch)
 
     n_samples = len(labels)
-    values = np.zeros((n_samples, 3))
-    exact_mask = np.zeros((n_samples, 3), dtype=bool)
-    greater_mask = np.zeros((n_samples, 3), dtype=bool)
-    less_mask = np.zeros((n_samples, 3), dtype=bool)
+    values = np.zeros((n_samples, 2))
+    exact_mask = np.zeros((n_samples, 2), dtype=bool)
+    greater_mask = np.zeros((n_samples, 2), dtype=bool)
+    less_mask = np.zeros((n_samples, 2), dtype=bool)
 
     for i, row in enumerate(labels):
         for j, val in enumerate(row):
