@@ -10,7 +10,7 @@ from esm.models.x_esmc import ESMC
 from esm.models.x_dataset import SequenceDataset, collate_fn
 from esm.sdk.api import ESMProtein
 
-BATCH_SIZE = 4
+BATCH_SIZE = 2
 VAL_BATCH = 4
 NUM_EPOCHS = 100
 #EVAL_ITER = 4096
@@ -96,17 +96,19 @@ class CensoredGaussianNLL(nn.Module):
 
         #return nll.mean()
 
-        logsigma = 0.0
-        sigma = 1.0
+        #logsigma = 0.0
+        #sigma = 1.0
+        #sigma = torch.clamp(logsigma.exp(), min=0.1, max=10.0)
+        logsigma = torch.clamp(logsigma, min=-2.3, max=2.3)
+        sigma = logsigma.exp()
+        normal = torch.distributions.Normal(mu, sigma)
         z = (values - mu) / sigma
 
         total_loss = 0.0
 
         # Exact observations
         if exact_mask.any():
-            exact_z = z.masked_select(exact_mask)
-            exact_nll = 0.5 * exact_z.pow(2) + logsigma + self.t
-            total_loss += exact_nll.sum()
+            total_loss -= normal.log_prob(values)[exact_mask].sum()
 
         # Left-censored (upper bound)
         if less_mask.any():
@@ -126,16 +128,18 @@ class CensoredGaussianNLL(nn.Module):
 
     def separate_nll(self, mu, logsigma, values, exact_mask, greater_mask,
                      less_mask):
-        logsigma = 0.0
-        sigma = 1.0
+        #logsigma = 0.0
+        #sigma = 1.0
+        #sigma = torch.clamp(logsigma.exp(), .1)
+        logsigma = torch.clamp(logsigma, min=-2.3, max=2.3)
+        sigma = logsigma.exp()
+        normal = torch.distributions.Normal(mu, sigma)
         z = (values - mu) / sigma
 
         # --- Exact NLL ---
         exact_loss = torch.tensor(0.0, device=mu.device)
         if exact_mask.any():
-            exact_z = z.masked_select(exact_mask)
-            exact_nll = 0.5 * exact_z.pow(2) + logsigma + self.t
-            exact_loss = exact_nll.sum()
+            exact_loss = -normal.log_prob(values)[exact_mask].sum()
 
         # --- Left-censored NLL ---
         left_loss = torch.tensor(0.0, device=mu.device)
@@ -210,14 +214,14 @@ def main(client, train_loader, val_loader):
             param.requires_grad = True
             lora_params.append(param)
     client.mu.requires_grad_(True)
-    #client.logsigma.requires_grad_(True)
+    client.logsigma.requires_grad_(True)
 
     from itertools import chain
     optimizer = torch.optim.AdamW(
         chain(
             lora_params,
             client.mu.parameters(),
-            #client.logsigma.parameters(),
+            client.logsigma.parameters(),
         ),
         lr=1e-4,
         weight_decay=0.01,
@@ -252,6 +256,7 @@ def main(client, train_loader, val_loader):
                 )
             (loss / GRAD_ACC).backward()
             if (idx + 1) % 128 == 0:
+                print('#' * 20)
                 print('idx: {}'.format(idx))
                 print('values:\n{}'.format(values.detach().cpu()))
                 print('mu:\n{}'.format(mu.detach().cpu()))
@@ -286,9 +291,8 @@ def main(client, train_loader, val_loader):
                                 if 'lora' in n
                             },
                             "mu": client.mu.state_dict(),
-                            #"logsigma": client.logsigma.state_dict(),
-                        },
-                        ckpt_path)
+                            "logsigma": client.logsigma.state_dict(),
+                        }, ckpt_path)
                     print(f"Saved improved model to {ckpt_path}")
 
                 client.train()
