@@ -25,6 +25,52 @@ from esm.utils.constants.models import ESMC_600M
 from esm.utils.decoding import decode_sequence
 from esm.utils.misc import stack_variable_length_tensors
 
+#class TwoHeadMu(nn.Module):
+#
+#    def __init__(self, d_model: int):
+#        super().__init__()
+#        # Shared trunk before splitting
+#        self.shared = nn.Sequential(
+#            nn.LayerNorm(d_model, bias=False),
+#            nn.Linear(d_model, 3 * d_model),
+#        )
+#
+#        # Separate output heads for IC50 and IC80
+#        self.mu50_out = nn.Sequential(
+#            nn.PReLU(num_parameters=1, init=0.25),
+#            nn.Linear(d_model, 1),
+#        )
+#        self.mu80_out = nn.Sequential(
+#            nn.PReLU(num_parameters=1, init=0.25),
+#            nn.Linear(d_model, 1),
+#        )
+#        self.mu_ID50 = nn.Sequential(
+#            nn.PReLU(num_parameters=1, init=0.25),
+#            nn.Linear(d_model, 1),
+#        )
+#
+#    def forward(self, x: torch.Tensor) -> torch.Tensor:
+#        """
+#        Args:
+#            x: [B, d_model] input (e.g., CLS embedding)
+#        Returns:
+#            mu: [B, 2] tensor, where mu[:, 0] = IC50, mu[:, 1] = IC80
+#        """
+#        # Shared transformation
+#        t = self.shared(x)  # [B, 2 * d_model]
+#
+#        # Split into two [B, d_model] chunks
+#        mu50_h, mu80_h, muID50_h = torch.chunk(t, 3, dim=-1)
+#
+#        # Apply independent output heads
+#        mu50 = self.mu50_out(mu50_h)  # [B, 1]
+#        mu80 = self.mu80_out(mu80_h)  # [B, 1]
+#        muID50 = self.mu_ID50(muID50_h)  # [B, 1]
+#
+#        # Concatenate results → [B, 2]
+#        mu = torch.cat([mu50, mu80, muID50], dim=-1)
+#        return mu
+
 
 class ESMC(nn.Module, ESMCInferenceClient):
     """
@@ -60,9 +106,10 @@ class ESMC(nn.Module, ESMCInferenceClient):
         self.sequence_head = RegressionHead(d_model, 64)
         self.tokenizer = tokenizer
 
+        #self.mu = TwoHeadMu(d_model)
         self.mu = nn.Sequential(
             nn.LayerNorm(d_model, bias=False),
-            nn.Linear(d_model, 2),
+            nn.Linear(d_model, 3),
         )
         #self.logsigma = nn.Sequential(
         #    nn.LayerNorm(d_model, bias=False),

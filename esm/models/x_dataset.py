@@ -15,13 +15,15 @@ class SequenceDataset(Dataset):
 
         t = pd.read_csv(os.path.join(prefix, "antibody-seq.csv"))
         self.antibody_lookup = {
-            row['antibody-id']: row['heavy-seq'].ljust(512, '-') + '|' + row['light-seq'].ljust(256, '-')
+            #row['antibody-id']: row['heavy-seq'].ljust(512, '-') + '|' + row['light-seq'].ljust(256, '-')
+            row['antibody-id']: row['heavy-seq'] + '|' + row['light-seq']
             for _, row in t.iterrows()
         }
 
         t = pd.read_csv(os.path.join(prefix, "virus-seq.csv"))
         self.virus_lookup = {
-            row['virus-id']: row['seq'].ljust(1152, '-')
+            #row['virus-id']: row['seq'].ljust(1152, '-')
+            row['virus-id']: row['seq']
             for _, row in t.iterrows()
         }
 
@@ -29,16 +31,16 @@ class SequenceDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        antibody, virus, IC50, IC80 = self.data.iloc[idx]
+        antibody, virus, IC50, IC80, ID50 = self.data.iloc[idx]
         subs = [x.strip() for x in antibody.split("+")]
         random.shuffle(subs)
         subs = [self.antibody_lookup[_] for _ in subs]
-        assert len(subs) == 1
+        #assert len(subs) == 1
         seq = "||".join(subs)
 
         # first virus, then antibody. as antibodies can be multiple
         seq = "|||".join([self.virus_lookup[virus], seq])
-        return seq, (IC50, IC80)
+        return seq, (IC50, IC80, ID50)
 
 
 def collate_fn(batch):
@@ -46,10 +48,10 @@ def collate_fn(batch):
     sequences, labels = zip(*batch)
 
     n_samples = len(labels)
-    values = np.zeros((n_samples, 2))
-    exact_mask = np.zeros((n_samples, 2), dtype=bool)
-    greater_mask = np.zeros((n_samples, 2), dtype=bool)
-    less_mask = np.zeros((n_samples, 2), dtype=bool)
+    values = np.zeros((n_samples, 3))
+    exact_mask = np.zeros((n_samples, 3), dtype=bool)
+    greater_mask = np.zeros((n_samples, 3), dtype=bool)
+    less_mask = np.zeros((n_samples, 3), dtype=bool)
 
     for i, row in enumerate(labels):
         for j, val in enumerate(row):

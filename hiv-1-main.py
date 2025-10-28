@@ -124,19 +124,46 @@ class CensoredGaussianNLL(nn.Module):
         denom = mu.shape[0] * mu.shape[1]
         return total_loss / denom
 
+    def separate_nll(self, mu, logsigma, values, exact_mask, greater_mask,
+                     less_mask):
+        logsigma = 0.0
+        sigma = 1.0
+        z = (values - mu) / sigma
+
+        # --- Exact NLL ---
+        exact_loss = torch.tensor(0.0, device=mu.device)
+        if exact_mask.any():
+            exact_z = z.masked_select(exact_mask)
+            exact_nll = 0.5 * exact_z.pow(2) + logsigma + self.t
+            exact_loss = exact_nll.sum()
+
+        # --- Left-censored NLL ---
+        left_loss = torch.tensor(0.0, device=mu.device)
+        if less_mask.any():
+            left_z = z.masked_select(less_mask)
+            left_log_prob = torch.special.log_ndtr(left_z)
+            left_loss = (-left_log_prob).sum()
+
+        # --- Right-censored NLL ---
+        right_loss = torch.tensor(0.0, device=mu.device)
+        if greater_mask.any():
+            right_z = z.masked_select(greater_mask)
+            right_log_prob = torch.special.log_ndtr(-right_z)
+            right_loss = (-right_log_prob).sum()
+
+        return exact_loss, left_loss, right_loss
+
 
 def evaluate(client, val_loader, criterion):
     client.eval()
-    total_nll = 0.0
-    count = 0
-
+    # Index 0: exact, 1: left-censored, 2: right-censored
+    total_losses = [0.0, 0.0, 0.0]
+    total_counts = [0, 0, 0]
     for (seq, label) in val_loader:
         protein = ESMProtein(sequence=seq)
         protein_tensor = client.encode(protein)
         device = protein_tensor.device
-        t = []
-        for _ in label:
-            t.append(torch.from_numpy(_).to(device))
+        t = [torch.from_numpy(_).to(device) for _ in label]
         values, exact_mask, greater_mask, less_mask = t
         with (
                 torch.no_grad(),
@@ -146,8 +173,7 @@ def evaluate(client, val_loader, criterion):
                 if device.type == "cuda" else contextlib.nullcontext(),
         ):
             mu, logsigma = client.predict(protein_tensor)
-
-            nll = criterion(
+            losses = criterion.separate_nll(
                 mu,
                 logsigma,
                 values,
@@ -155,10 +181,24 @@ def evaluate(client, val_loader, criterion):
                 greater_mask,
                 less_mask,
             )
-        total_nll += nll.item() * mu.size(0)
-        count += mu.size(0)
 
-    return total_nll / count
+        masks = [exact_mask, less_mask, greater_mask]
+        for i in range(3):
+            total_losses[i] += losses[i].item()
+            total_counts[i] += masks[i].sum().item()
+    # Compute averages, guarding against divide-by-zero
+    avg_losses = [
+        total_losses[i] / total_counts[i] if total_counts[i] > 0 else 0.0
+        for i in range(3)
+    ]
+    # Global weighted average
+    total_loss_sum = sum(total_losses)
+    total_count_sum = sum(total_counts)
+    global_avg_nll = total_loss_sum / total_count_sum if total_count_sum > 0 else 0.0
+
+    #return tuple(avg_losses)  # (avg_exact, avg_left, avg_right)
+    # Return all four values
+    return (*avg_losses, global_avg_nll)
 
 
 def main(client, train_loader, val_loader):
@@ -185,7 +225,7 @@ def main(client, train_loader, val_loader):
     criterion = CensoredGaussianNLL()
 
     best_nll = float("inf")  # track best validation performance
-    save_dir = "./checkpoints"
+    save_dir = "./checkpoints-v1"
     os.makedirs(save_dir, exist_ok=True)
 
     for epoch in range(NUM_EPOCHS):
@@ -194,9 +234,7 @@ def main(client, train_loader, val_loader):
             protein = ESMProtein(sequence=seq)
             protein_tensor = client.encode(protein)
             device = protein_tensor.device
-            t = []
-            for _ in label:
-                t.append(torch.from_numpy(_).to(device))
+            t = [torch.from_numpy(_).to(device) for _ in label]
             values, exact_mask, greater_mask, less_mask = t
             with (
                     torch.autocast(enabled=True,
@@ -225,11 +263,20 @@ def main(client, train_loader, val_loader):
                 optimizer.step()
                 optimizer.zero_grad()
             if (idx + 1) % EVAL_ITER == 0:
-                test_nll = evaluate(client, val_loader, criterion)
-                print(f"Epoch {epoch}, iter {idx}: Test NLL = {test_nll:.4f}")
-                # Save if improved
-                if test_nll < best_nll:
-                    best_nll = test_nll
+                exact_nll, left_nll, right_nll, global_nll = evaluate(
+                    client,
+                    val_loader,
+                    criterion,
+                )
+                print(f"Epoch {epoch}, iter {idx}:")
+                print(f"  Exact NLL = {exact_nll:.4f}")
+                print(f"  Left-censored NLL = {left_nll:.4f}")
+                print(f"  Right-censored NLL = {right_nll:.4f}")
+                print(f"  --> Global Avg NLL = {global_nll:.4f}")
+
+                # Save if global average improves
+                if global_nll < best_nll:
+                    best_nll = global_nll
                     ckpt_path = os.path.join(save_dir, "best-hiv-1.pt")
                     torch.save(
                         {
@@ -240,7 +287,8 @@ def main(client, train_loader, val_loader):
                             },
                             "mu": client.mu.state_dict(),
                             #"logsigma": client.logsigma.state_dict(),
-                        }, ckpt_path)
+                        },
+                        ckpt_path)
                     print(f"Saved improved model to {ckpt_path}")
 
                 client.train()
@@ -248,11 +296,22 @@ def main(client, train_loader, val_loader):
     print(f"FINAL Test NLL = {test_nll:.4f}")
 
 
+def load_checkpoint(client, ckpt_path, device="cuda"):
+    ckpt = torch.load(ckpt_path, map_location=device)
+    with torch.no_grad():
+        for name, param in client.named_parameters():
+            if 'lora' in name and name in ckpt["lora_params"]:
+                param.copy_(ckpt["lora_params"][name].to(param.device))
+    client.mu.load_state_dict(ckpt["mu"])
+    print(f"Loaded checkpoint from {ckpt_path}")
+    return client
+
+
 if __name__ == '__main__':
     import pandas as pd
     prefix = "./hiv-data/antibody-antigen-seq"
-    #df = pd.read_csv(os.path.join(prefix, "filtered-assay.csv"))
-    df = pd.read_csv(os.path.join(prefix, "single-assay_noID50.csv"))
+    df = pd.read_csv(os.path.join(prefix, "filtered-assay.csv"))
+    #df = pd.read_csv(os.path.join(prefix, "single-assay_noID50.csv"))
     from sklearn.model_selection import train_test_split
 
     #train_df, val_df = train_test_split(df, test_size=0.02, random_state=42)
@@ -269,4 +328,6 @@ if __name__ == '__main__':
         collate_fn=collate_fn,
     )
     client = ESMC.from_pretrained("esmc_600m").to("cuda")  # or "cpu"
+    if False:
+        load_checkpoint(client, "best-hiv-1.pt")
     main(client, train_loader, val_loader)
