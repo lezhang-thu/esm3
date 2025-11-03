@@ -47,8 +47,10 @@ def x_swiglu_ln_ffn(d_model: int, expansion_ratio: float, bias: bool):
     # lora_alpha: 64  # usually alpha=2*rank
     # lora_dropout: 0.0
     from esm.layers.lora import LoRALinear
-    lora_rank = 32
-    lora_alpha = 64
+    #lora_rank = 32
+    #lora_alpha = 64
+    lora_rank = 256
+    lora_alpha = 512
     lora_dropout = 0.0
     return nn.Sequential(
         nn.LayerNorm(d_model),

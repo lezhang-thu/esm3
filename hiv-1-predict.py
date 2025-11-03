@@ -29,13 +29,9 @@ def main(client, val_loader):
                 if device.type == "cuda" else contextlib.nullcontext(),
         ):
             mu, logsigma = client.predict(protein_tensor)
-            print("logsigma.exp():")
-            print((logsigma.exp())[:, :2])
-            print(10 ** mu[:, :2])
-            #exit(0)
             muS.append(mu.cpu().float().numpy())
     # NO ID50
-    return 10 ** (np.concatenate(muS, axis=0)[:, :2])
+    return 10**(np.concatenate(muS, axis=0)[:, :2])
 
 
 def load_checkpoint(client, ckpt_path, device="cuda"):
@@ -46,7 +42,6 @@ def load_checkpoint(client, ckpt_path, device="cuda"):
             if 'lora' in name and name in ckpt["lora_params"]:
                 param.copy_(ckpt["lora_params"][name].to(param.device))
     client.mu.load_state_dict(ckpt["mu"])
-    client.logsigma.load_state_dict(ckpt["logsigma"])
     print(f"Loaded checkpoint from {ckpt_path}")
     return client
 
@@ -61,7 +56,7 @@ if __name__ == '__main__':
         shuffle=False,
     )
     client = ESMC.from_pretrained("esmc_600m").to("cuda")  # or "cpu"
-    load_checkpoint(client, "star-hiv-1.pt")
+    load_checkpoint(client, "hiv-1.pt")
     muS = main(client, val_loader)
     # Add IC50 and IC80 columns
     val_df["IC50"] = muS[:, 0]

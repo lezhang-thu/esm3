@@ -47,8 +47,10 @@ class LoRALinearQKV(nn.Module):
         # lora_rank: 32  # higher increases accuracy and memory
         # lora_alpha: 64  # usually alpha=2*rank
         # lora_dropout: 0.0
-        self.rank = 32
-        self.alpha = 64
+        #self.rank = 32
+        #self.alpha = 64
+        self.rank = 256
+        self.alpha = 512
 
         def make_lora_pair(in_dim, rank):
             a = nn.Linear(in_dim, rank, bias=False)

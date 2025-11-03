@@ -11,11 +11,10 @@ from esm.models.x_esmc import ESMC
 from esm.models.x_dataset import SequenceDataset, collate_fn
 from esm.sdk.api import ESMProtein
 
-BATCH_SIZE = 2
+BATCH_SIZE = 4
 VAL_BATCH = 4
 NUM_EPOCHS = 100
-#EVAL_ITER = 4096
-EVAL_ITER = 1024
+EVAL_ITER = 4096
 GRAD_ACC = 16
 
 #EPS = 1e-12
@@ -69,59 +68,22 @@ class CensoredGaussianNLL(nn.Module):
         greater_mask,
         less_mask,
     ):
-        ##logsigma = torch.clamp(logsigma, min=-10, max=10)  # σ ∈ [4.5e-5, 22026]
-        ##logsigma = torch.clamp(logsigma, min=-7, max=7)  # σ ∈ [9e-4, 1096]
-        ##sigma = torch.clamp(logsigma.exp(), min=1e-6)
-        #logsigma = 0.0
-        #sigma = 1.0
-        #z = (values - mu) / sigma
-        ##z = torch.clamp(z, min=-10, max=10)
-        ##z = torch.clamp(z, min=-8, max=8)  # Φ(±8) ≈ 6e-16
-
-        ## Exact: -0.5*log(2π) - log(σ) - 0.5*z²
-        #exact_nll = 0.5 * z**2 + logsigma + self.t
-
-        ## Left-censored: log Φ(z)
-        #left_log_prob = torch.special.log_ndtr(z)
-
-        ## Right-censored: log(1 - Φ(z)) = log Φ(-z)
-        #right_log_prob = torch.special.log_ndtr(-z)
-
-        ## debug
-        ##exact_nll = .5 * (values - mu)**2
-        ##assert torch.all(exact_mask[:, :1])
-        #nll = exact_nll * exact_mask.float()
-        #nll = nll - left_log_prob * less_mask.float()
-        #nll = nll - right_log_prob * greater_mask.float()
-        ##nll = nll[:, :1]
-
-        #return nll.mean()
-
-        #logsigma = 0.0
-        #sigma = 1.0
-        #sigma = torch.clamp(logsigma.exp(), min=0.1, max=10.0)
-        logsigma = torch.clamp(logsigma, min=np.log(0.1), max=np.log(0.5))
-        sigma = logsigma.exp()
-        normal = torch.distributions.Normal(mu, sigma)
-        z = (values - mu) / sigma
-
         total_loss = 0.0
 
         # Exact observations
         if exact_mask.any():
-            total_loss -= normal.log_prob(values)[exact_mask].sum()
+            total_loss += .5 * torch.sum(
+                (values[exact_mask] - mu[exact_mask])**2)
 
         # Left-censored (upper bound)
         if less_mask.any():
-            left_z = z.masked_select(less_mask)
-            left_log_prob = torch.special.log_ndtr(left_z)
-            total_loss -= left_log_prob.sum()
+            total_loss += .5 * torch.sum(
+                torch.relu(mu[less_mask] - values[less_mask])**2)
 
         # Right-censored (lower bound)
         if greater_mask.any():
-            right_z = z.masked_select(greater_mask)
-            right_log_prob = torch.special.log_ndtr(-right_z)
-            total_loss -= right_log_prob.sum()
+            total_loss += .5 * torch.sum(
+                torch.relu(values[greater_mask] - mu[greater_mask])**2)
 
         # Normalize by total number of positions
         denom = mu.shape[0] * mu.shape[1]
@@ -129,32 +91,23 @@ class CensoredGaussianNLL(nn.Module):
 
     def separate_nll(self, mu, logsigma, values, exact_mask, greater_mask,
                      less_mask):
-        #logsigma = 0.0
-        #sigma = 1.0
-        #sigma = torch.clamp(logsigma.exp(), .1)
-        logsigma = torch.clamp(logsigma, min=np.log(0.1), max=np.log(0.5))
-        sigma = logsigma.exp()
-        normal = torch.distributions.Normal(mu, sigma)
-        z = (values - mu) / sigma
-
         # --- Exact NLL ---
         exact_loss = torch.tensor(0.0, device=mu.device)
         if exact_mask.any():
-            exact_loss = -normal.log_prob(values)[exact_mask].sum()
+            exact_loss = .5 * torch.sum(
+                (values[exact_mask] - mu[exact_mask])**2)
 
         # --- Left-censored NLL ---
         left_loss = torch.tensor(0.0, device=mu.device)
         if less_mask.any():
-            left_z = z.masked_select(less_mask)
-            left_log_prob = torch.special.log_ndtr(left_z)
-            left_loss = (-left_log_prob).sum()
+            left_loss = .5 * torch.sum(
+                torch.relu(mu[less_mask] - values[less_mask])**2)
 
         # --- Right-censored NLL ---
         right_loss = torch.tensor(0.0, device=mu.device)
         if greater_mask.any():
-            right_z = z.masked_select(greater_mask)
-            right_log_prob = torch.special.log_ndtr(-right_z)
-            right_loss = (-right_log_prob).sum()
+            right_loss = .5 * torch.sum(
+                torch.relu(values[greater_mask] - mu[greater_mask])**2)
 
         return exact_loss, left_loss, right_loss
 
@@ -215,14 +168,14 @@ def main(client, train_loader, val_loader):
             param.requires_grad = True
             lora_params.append(param)
     client.mu.requires_grad_(True)
-    client.logsigma.requires_grad_(True)
+    #client.logsigma.requires_grad_(True)
 
     from itertools import chain
     optimizer = torch.optim.AdamW(
         chain(
             lora_params,
             client.mu.parameters(),
-            client.logsigma.parameters(),
+            #client.logsigma.parameters(),
         ),
         lr=1e-4,
         weight_decay=0.01,
@@ -230,8 +183,18 @@ def main(client, train_loader, val_loader):
     criterion = CensoredGaussianNLL()
 
     best_nll = float("inf")  # track best validation performance
-    save_dir = "./checkpoints-v1"
+    save_dir = "checkpoints"
     os.makedirs(save_dir, exist_ok=True)
+
+    exact_nll, left_nll, right_nll, global_nll = evaluate(
+        client,
+        val_loader,
+        criterion,
+    )
+    print(f"  Exact NLL = {exact_nll:.4f}")
+    print(f"  Left-censored NLL = {left_nll:.4f}")
+    print(f"  Right-censored NLL = {right_nll:.4f}")
+    print(f"  --> Global Avg NLL = {global_nll:.4f}")
 
     for epoch in range(NUM_EPOCHS):
         client.train()
@@ -292,13 +255,27 @@ def main(client, train_loader, val_loader):
                                 if 'lora' in n
                             },
                             "mu": client.mu.state_dict(),
-                            "logsigma": client.logsigma.state_dict(),
-                        }, ckpt_path)
+                            #"logsigma": client.logsigma.state_dict(),
+                        },
+                        ckpt_path)
                     print(f"Saved improved model to {ckpt_path}")
 
                 client.train()
-    test_nll = evaluate(client, val_loader, criterion)
-    print(f"FINAL Test NLL = {test_nll:.4f}")
+    if False:
+        ckpt_path = os.path.join(save_dir, "best-hiv-1.pt")
+        torch.save(
+            {
+                "lora_params": {
+                    n: p.cpu()
+                    for n, p in client.named_parameters() if 'lora' in n
+                },
+                "mu": client.mu.state_dict(),
+                #"logsigma": client.logsigma.state_dict(),
+            },
+            ckpt_path)
+        print(f"Saved improved model to {ckpt_path}")
+    #test_nll = evaluate(client, val_loader, criterion)
+    #print(f"FINAL Test NLL = {test_nll:.4f}")
 
 
 def load_checkpoint(client, ckpt_path, device="cuda"):
@@ -308,6 +285,7 @@ def load_checkpoint(client, ckpt_path, device="cuda"):
             if 'lora' in name and name in ckpt["lora_params"]:
                 param.copy_(ckpt["lora_params"][name].to(param.device))
     client.mu.load_state_dict(ckpt["mu"])
+    #client.logsigma.load_state_dict(ckpt["logsigma"])
     print(f"Loaded checkpoint from {ckpt_path}")
     return client
 
@@ -319,7 +297,6 @@ if __name__ == '__main__':
     #df = pd.read_csv(os.path.join(prefix, "single-assay_noID50.csv"))
     from sklearn.model_selection import train_test_split
 
-    #train_df, val_df = train_test_split(df, test_size=0.02, random_state=42)
     train_df, val_df = train_test_split(df, test_size=0.02, random_state=42)
     train_loader = torch.utils.data.DataLoader(
         SequenceDataset(train_df),
@@ -333,6 +310,6 @@ if __name__ == '__main__':
         collate_fn=collate_fn,
     )
     client = ESMC.from_pretrained("esmc_600m").to("cuda")  # or "cpu"
-    if True:
+    if False:
         load_checkpoint(client, "star-hiv-1.pt")
     main(client, train_loader, val_loader)
