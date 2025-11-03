@@ -228,7 +228,7 @@ def main(client, train_loader, val_loader):
                 #    values.detach().cpu()[:, :1]))
                 #print('mu[:, :1]:\n{}'.format(mu.detach().cpu()[:, :1]))
                 #print('mu:\n{}'.format(mu.detach().cpu()))
-            if (idx + 1) % GRAD_ACC == 0:
+            if (idx + 1) % GRAD_ACC == 0 or (idx + 1) == len(train_loader):
                 optimizer.step()
                 optimizer.zero_grad()
             if (idx + 1) % EVAL_ITER == 0:
