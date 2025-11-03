@@ -1,6 +1,7 @@
 import os
 
 os.environ["HF_HUB_OFFLINE"] = "1"
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -99,7 +100,7 @@ class CensoredGaussianNLL(nn.Module):
         #logsigma = 0.0
         #sigma = 1.0
         #sigma = torch.clamp(logsigma.exp(), min=0.1, max=10.0)
-        logsigma = torch.clamp(logsigma, min=-2.3, max=2.3)
+        logsigma = torch.clamp(logsigma, min=np.log(0.1), max=np.log(0.5))
         sigma = logsigma.exp()
         normal = torch.distributions.Normal(mu, sigma)
         z = (values - mu) / sigma
@@ -131,7 +132,7 @@ class CensoredGaussianNLL(nn.Module):
         #logsigma = 0.0
         #sigma = 1.0
         #sigma = torch.clamp(logsigma.exp(), .1)
-        logsigma = torch.clamp(logsigma, min=-2.3, max=2.3)
+        logsigma = torch.clamp(logsigma, min=np.log(0.1), max=np.log(0.5))
         sigma = logsigma.exp()
         normal = torch.distributions.Normal(mu, sigma)
         z = (values - mu) / sigma
@@ -332,6 +333,6 @@ if __name__ == '__main__':
         collate_fn=collate_fn,
     )
     client = ESMC.from_pretrained("esmc_600m").to("cuda")  # or "cpu"
-    if False:
-        load_checkpoint(client, "best-hiv-1.pt")
+    if True:
+        load_checkpoint(client, "star-hiv-1.pt")
     main(client, train_loader, val_loader)
